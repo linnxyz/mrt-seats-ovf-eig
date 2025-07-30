@@ -61,9 +61,21 @@ function renderTrains() {
 }
 
 function renderCar(car) {
+    const totalSeats = car.seats.length;
+    const occupiedSeats = car.seats.filter(seat => seat.status === 'taken').length;
+    const occupancyRate = totalSeats > 0 ? occupiedSeats / totalSeats : 0;
+
+    // HSL interpolation: green (120deg) to red (0deg)
+    function interpolateColor(rate) {
+        const hue = 120 - 120 * rate; // 120 (green) to 0 (red)
+        return `hsl(${hue}, 70%, 60%)`;
+    }
+
+    const carBgColor = interpolateColor(occupancyRate);
+
     const seatRows = organizeSeatRows(car.seats);
     return `
-        <div class="car">
+        <div class="car" style="background:${carBgColor}; transition: background 0.5s;">
             <div class="car-header">${car.name}</div>
             <div class="seats-container">
                 <div class="seat-section">
@@ -169,10 +181,21 @@ function initializeWebSocket() {
     socket.onmessage = (event) => {
         console.log('[WebSocket INCOMING]', event.data);
 
-        const message = JSON.parse(event.data);
-        if (message.type === 'seatUpdate') {
-            seatMonitor = message.data;
-            renderTrains();
+        try {
+            const message = JSON.parse(event.data);
+
+            // If message is a seat update (from your server)
+            if (message.seatId && message.status) {
+                handleWebSocketMessage(message);
+            }
+            // If message is in your app's format
+            else if (message.type === 'seatUpdate' && message.data) {
+                seatMonitor = message.data;
+                renderTrains();
+                updateStatistics();
+            }
+        } catch (err) {
+            console.error('[WebSocket ERROR] Failed to parse message', err);
         }
     };
 
@@ -208,6 +231,59 @@ function sendCloseDoor(trainId) {
     console.log('[WebSocket OUTGOING]', json);
     socket.send(json);
 }
+
+// let mqttClient;
+
+// function initializeMQTT() {
+//     // Connect to MQTT broker (change this to your actual broker)
+//     mqttClient = mqtt.connect('ws://localhost:9001'); // e.g., Mosquitto WebSocket port
+
+//     mqttClient.on('connect', () => {
+//         console.log('[MQTT CONNECTED]');
+
+//         // Subscribe to seat updates
+//         mqttClient.subscribe('train/seats/update', (err) => {
+//             if (err) console.error('[MQTT SUBSCRIBE ERROR]', err);
+//             else console.log('[MQTT SUBSCRIBED] train/seats/update');
+//         });
+//     });
+
+//     mqttClient.on('message', (topic, message) => {
+//         console.log(`[MQTT INCOMING] Topic: ${topic}`, message.toString());
+
+//         try {
+//             const data = JSON.parse(message.toString());
+
+//             if (topic === 'train/seats/update' && data.seatId && data.status) {
+//                 handleWebSocketMessage(data); // reuse same handler
+//             }
+//         } catch (err) {
+//             console.error('[MQTT ERROR] Failed to parse', err);
+//         }
+//     });
+
+//     mqttClient.on('error', (err) => {
+//         console.error('[MQTT ERROR]', err);
+//     });
+
+//     mqttClient.on('close', () => {
+//         console.log('[MQTT DISCONNECTED]');
+//     });
+// }
+
+// function sendCloseDoor(trainId) {
+//     const message = {
+//         type: 'closeDoor',
+//         trainId: trainId
+//     };
+//     const json = JSON.stringify(message);
+//     console.log('[MQTT OUTGOING]', json);
+
+//     mqttClient.publish('train/door/control', json);
+// }
+
+// initializeMQTT();
+
 
 
 // Initialize app

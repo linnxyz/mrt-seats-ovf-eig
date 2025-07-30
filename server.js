@@ -1,4 +1,4 @@
-// server.js
+// server.js USING WEBSOCKETS
 const WebSocket = require('ws');
 
 const wss = new WebSocket.Server({ port: 8080 });
@@ -20,7 +20,7 @@ wss.on('connection', (ws) => {
         const update = getRandomSeatUpdate();
         console.log('[Server OUTGOING]', update);
         ws.send(update);
-    }, 5000);
+    }, 1000);
 
     // Listen to messages from client
     ws.on('message', (msg) => {
