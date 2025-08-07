@@ -1,8 +1,11 @@
-let socket;
+let mqttClient;
 
 const seatMonitor = {
     trains: []
 };
+
+const mqtt_sub_topic = 'seats/status';
+const mqtt_pub_topic = 'train/door/control';
 
 function initializeTrains() {
     seatMonitor.trains = [
@@ -10,8 +13,11 @@ function initializeTrains() {
             id: 'train-001',
             name: 'Train A',
             cars: [
-                { id: 'car-1', name: 'Car 1', seats: generateSeats(10) },
-                { id: 'car-2', name: 'Car 2', seats: generateSeats(10) }
+                { id: 'car-1', name: 'Car 1', seats: generateSeats(3) },
+                { id: 'car-2', name: 'Car 2', seats: generateSeats(3) },
+                { id: 'car-3', name: 'Car 3', seats: generateSeats(3) },
+                { id: 'car-4', name: 'Car 4', seats: generateSeats(3) },
+                { id: 'car-5', name: 'Car 5', seats: generateSeats(3) }
             ]
         }
     ];
@@ -33,7 +39,6 @@ function renderTrains() {
         const trainDiv = document.createElement('div');
         trainDiv.className = 'train-container';
 
-        // Correctly assign innerHTML using variables defined here
         const headerHTML = `
             <div class="train-header">
                 <div class="train-name">${train.name}</div>
@@ -42,7 +47,7 @@ function renderTrains() {
                     <div class="train-stat">Available: ${trainStats.available}</div>
                     <div class="train-stat">Occupied: ${trainStats.occupied}</div>
                     <div class="train-stat">Rate: ${trainStats.rate}%</div>
-                    <button class="close-door-btn" onclick="sendCloseDoor('${train.id}')">🚪 Close Door</button>
+                    <button class="close-door-btn" onclick="sendCloseDoor('${train.id}')">🚪 Close All Doors</button>
                 </div>
             </div>
         `;
@@ -50,7 +55,7 @@ function renderTrains() {
         const carsHTML = `
             <div class="train-layout">
                 <div class="car-grid">
-                    ${train.cars.map(renderCar).join('')}
+                    ${train.cars.map(car => renderCar(car, train.id)).join('')}
                 </div>
             </div>
         `;
@@ -60,31 +65,26 @@ function renderTrains() {
     });
 }
 
-function renderCar(car) {
+function renderCar(car, trainId) {
     const totalSeats = car.seats.length;
     const occupiedSeats = car.seats.filter(seat => seat.status === 'taken').length;
     const occupancyRate = totalSeats > 0 ? occupiedSeats / totalSeats : 0;
 
-    // HSL interpolation: green (120deg) to red (0deg)
-    function interpolateColor(rate) {
-        const hue = 120 - 120 * rate; // 120 (green) to 0 (red)
-        return `hsl(${hue}, 70%, 60%)`;
-    }
-
-    const carBgColor = interpolateColor(occupancyRate);
+    const carBgColor = `hsl(${120 - 120 * occupancyRate}, 70%, 60%)`;
 
     const seatRows = organizeSeatRows(car.seats);
     return `
         <div class="car" style="background:${carBgColor}; transition: background 0.5s;">
-            <div class="car-header">${car.name}</div>
+            <div class="car-header">
+                <span>${car.name}</span>
+            </div>
             <div class="seats-container">
                 <div class="seat-section">
                     ${seatRows.left.map(row => `
                         <div class="seat-row">
                             ${row.map(seat => `
                                 <div class="seat ${seat.status}" 
-                                        data-seat-id="${seat.id}" 
-                                        onclick="toggleSeat('${seat.id}')">
+                                        data-seat-id="${seat.id}">
                                     ${seat.number}
                                 </div>
                             `).join('')}
@@ -97,8 +97,7 @@ function renderCar(car) {
                         <div class="seat-row">
                             ${row.map(seat => `
                                 <div class="seat ${seat.status}" 
-                                        data-seat-id="${seat.id}" 
-                                        onclick="toggleSeat('${seat.id}')">
+                                        data-seat-id="${seat.id}">
                                     ${seat.number}
                                 </div>
                             `).join('')}
@@ -113,11 +112,15 @@ function renderCar(car) {
 function organizeSeatRows(seats) {
     const left = [];
     const right = [];
+
     for (let i = 0; i < seats.length; i += 2) {
-        const row = seats.slice(i, i + 2);
-        left.push([row[0]]);
-        right.push([row[1]]);
+        const leftSeat = seats[i];
+        const rightSeat = seats[i + 1];
+
+        if (leftSeat) left.push([leftSeat]);
+        if (rightSeat) right.push([rightSeat]);
     }
+
     return { left, right };
 }
 
@@ -144,18 +147,7 @@ function updateStatistics() {
     document.getElementById('occupancyRate').textContent = rate + '%';
 }
 
-function toggleSeat(seatId) {
-    seatMonitor.trains.forEach(train => {
-        train.cars.forEach(car => {
-            const seat = car.seats.find(s => s && s.id === seatId);
-            if (seat) {
-                seat.status = seat.status === 'empty' ? 'taken' : 'empty';
-            }
-        });
-    });
-    renderTrains();
-    updateStatistics();
-}
+
 
 function simulateDataUpdate() {
     seatMonitor.trains.forEach(train => {
@@ -171,44 +163,6 @@ function simulateDataUpdate() {
     updateStatistics();
 }
 
-function initializeWebSocket() {
-    socket = new WebSocket('ws://localhost:8080');
-
-    socket.onopen = () => {
-        console.log('[WebSocket OPEN] Connected to server');
-    };
-
-    socket.onmessage = (event) => {
-        console.log('[WebSocket INCOMING]', event.data);
-
-        try {
-            const message = JSON.parse(event.data);
-
-            // If message is a seat update (from your server)
-            if (message.seatId && message.status) {
-                handleWebSocketMessage(message);
-            }
-            // If message is in your app's format
-            else if (message.type === 'seatUpdate' && message.data) {
-                seatMonitor = message.data;
-                renderTrains();
-                updateStatistics();
-            }
-        } catch (err) {
-            console.error('[WebSocket ERROR] Failed to parse message', err);
-        }
-    };
-
-    socket.onclose = () => {
-        console.log('[WebSocket CLOSED] Connection closed');
-    };
-
-    socket.onerror = (error) => {
-        console.error('[WebSocket ERROR]', error);
-    };
-}
-
-
 function handleWebSocketMessage(data) {
     seatMonitor.trains.forEach(train => {
         train.cars.forEach(car => {
@@ -222,15 +176,57 @@ function handleWebSocketMessage(data) {
     updateStatistics();
 }
 
+function initializeMQTT() {
+    mqttClient = mqtt.connect('ws://192.168.249.180:9001');
+
+    mqttClient.on('connect', () => {
+        console.log('[MQTT CONNECTED]');
+
+        mqttClient.subscribe(mqtt_sub_topic, (err) => {
+            if (err) console.error('[MQTT SUBSCRIBE ERROR]', err);
+            else console.log(`[MQTT SUBSCRIBED] ${mqtt_sub_topic}`);
+        });
+    });
+
+    mqttClient.on('message', (topic, message) => {
+        console.log(`[MQTT INCOMING] Topic: ${topic}`, message.toString());
+
+        try {
+            const data = JSON.parse(message.toString());
+
+            if (topic === mqtt_sub_topic && data.seatId && data.status) {
+                handleWebSocketMessage(data);
+            }
+        } catch (err) {
+            console.error('[MQTT ERROR] Failed to parse', err);
+        }
+    });
+
+    mqttClient.on('error', (err) => {
+        console.error('[MQTT ERROR]', err);
+    });
+
+    mqttClient.on('close', () => {
+        console.log('[MQTT DISCONNECTED]');
+    });
+}
+
 function sendCloseDoor(trainId) {
     const message = {
         type: 'closeDoor',
-        trainId: trainId
+        trainId: trainId,
+        scope: 'all'
     };
     const json = JSON.stringify(message);
-    console.log('[WebSocket OUTGOING]', json);
-    socket.send(json);
+    console.log('[MQTT OUTGOING - ALL DOORS]', json);
+
+    mqttClient.publish(mqtt_pub_topic, json);
 }
+
+initializeTrains();
+renderTrains();
+updateStatistics();
+initializeMQTT();
 
 // let mqttClient;
 
